@@ -76,28 +76,24 @@ If no TXT is given, the TOC is generated from the filenames and each file's book
 
 ## PDF Compressor
 
-### Methods
+Shrinks PDFs while keeping everything else intact: text stays selectable, and links, annotations, forms and bookmarks are unchanged. It works by re-encoding the images inside the PDF (JPEG and uncompressed/Flate RGB or grayscale images) at lower resolution and quality, dropping page thumbnails, and rewriting the file with compressed object streams.
 
-| Method | What it does | Text selectable | Bookmarks kept |
-|--------|--------------|:---:|:---:|
-| **Keep text** (default) | Re-encodes embedded JPEG images at lower resolution and quality, then rewrites the file with compressed object streams | Yes | Yes |
-| **Maximum** | Renders each page to a JPEG and rebuilds the PDF from images | No | No |
+### Options (choose one)
 
-### Levels
+| Option | Behaviour |
+|--------|-----------|
+| **Quality** (dropdown) | Low compression (best quality), Recommended, High compression, Extreme compression (lowest quality) |
+| **Max size** (KB) | Finds the **highest quality** that produces a file at or below the limit, applied to each file separately |
 
-| Level | JPEG quality | Max image size (Keep text) | Page DPI (Maximum) |
-|-------|:---:|:---:|:---:|
-| Low | 85% | 3000 px | 200 |
-| Recommended | 70% | 2000 px | 150 |
-| High | 50% | 1400 px | 110 |
-| Extreme | 35% | 1000 px | 72 |
+Max size works by trying a ladder of 12 quality/resolution steps (JPEG quality 90% to 10%, longest image side 3200 px to 350 px) and binary-searching for the mildest step that fits. If the file is already under the limit it is left alone. If even the strongest step is too big, the tool gives you the smallest possible result and tells you the target was not reached.
 
-Each file shows the before and after size. If compression makes no gain, the original is kept and you are told so.
+Each file shows its before and after size. If compression gives no gain, the original is kept.
 
 ### Notes
 
-- The **Keep text** method only shrinks JPEG (`DCTDecode`) images in RGB or grayscale. PDFs that are mostly text, vector graphics or non-JPEG images may shrink little. For scans, use **Maximum**.
-- It does not run Ghostscript-style full optimization (font subsetting, JPEG2000 and so on). That is not possible in a browser.
+- Files that are mostly text, fonts or vector graphics have little to shrink. A tight Max size may not be reachable for them without removing content, which this tool never does.
+- Indexed-colour, CMYK, masked images and images with TIFF predictors are skipped.
+- Fonts are not re-subset and JPEG2000 or JBIG2 images are not re-encoded.
 
 ## Browser support
 
