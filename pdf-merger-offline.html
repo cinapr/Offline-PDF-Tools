@@ -26,7 +26,8 @@ button{cursor:pointer}button.p{background:var(--acc);color:#fff;border-color:var
 <div id="files"></div>
 <div class="opts">
 <label><input type="checkbox" id="toc"> Add table of contents <small>(spans as many pages as needed)</small></label>
-<label>Cover page (1-page PDF, optional): <input type="file" id="cov" accept="application/pdf"></label>
+<label>Headings: <select id="deep"><option value="0">File names only (H1)</option><option value="1" selected>File names (H1) + each file's own bookmarks (H2, H3, ...)</option></select></label>
+<label>Cover pages (PDF with 1 or more pages, optional): <input type="file" id="cov" accept="application/pdf"></label>
 <label>TOC from TXT (optional): <input type="file" id="txt" accept=".txt,text/plain"> <small>lines: [level] Name | page</small></label>
 </div>
 <button class="p" id="go">Merge &amp; download</button><div id="msg"></div>
@@ -176,11 +177,11 @@ function layout(titles,lvls,font,bold){const P=[[]];let y=H-M-34;
  titles.forEach((t,i)=>{const x0=M+(lvls[i]-1)*18,f=lvls[i]==1?bold:font,lines=wrap(t,f,W-M-NUMW-x0),h=lines.length*LH+4;
   if(y-h<M){P.push([]);y=H-M}P[P.length-1].push({i,lines,y,x0,f,h});y-=h});return P}
 
-function addOutline(doc,items,refs){
+function addOutline(doc,items){
  const ctx=doc.context,N=PDFName.of,root={children:[],lvl:0},st=[root];
  items.forEach(it=>{while(st[st.length-1].lvl>=it.lvl)st.pop();const n={...it,children:[]};st[st.length-1].children.push(n);st.push(n)});
  const make=(ch,par)=>{if(!ch.length)return{n:0};const R=ch.map(()=>ctx.nextRef());let tot=ch.length;
-  ch.forEach((c,i)=>{const d=ctx.obj({Title:PDFHexString.fromText(c.title),Parent:par,Dest:[refs[c.gi],'Fit']});
+  ch.forEach((c,i)=>{const d=ctx.obj({Title:PDFHexString.fromText(c.title),Parent:par,Dest:[c.ref,'Fit']});
    if(i)d.set(N('Prev'),R[i-1]);if(i<ch.length-1)d.set(N('Next'),R[i+1]);
    const s=make(c.children,R[i]);if(s.n){d.set(N('First'),s.first);d.set(N('Last'),s.last);d.set(N('Count'),PDFNumber.of(s.n))}
    tot+=s.n;ctx.assign(R[i],d)});return{first:R[0],last:R[R.length-1],n:tot}};
@@ -196,12 +197,13 @@ async function build(){
  act.forEach(a=>{const map={};a.keep.forEach(o=>map[o]=gi++);const s=[...a.keep].sort((x,y)=>x-y);
   const res=p=>{const k=s.find(v=>v>=p);return map[k===undefined?s[s.length-1]:k]};
   ents.push({lvl:1,title:a.f.name.replace(/\.pdf$/i,''),gi:map[a.keep[0]]});
-  a.f.outline.forEach(it=>ents.push({lvl:it.lvl+1,title:it.title,gi:res(it.o)}))});
+  if($('deep').value==='1')a.f.outline.forEach(it=>ents.push({lvl:it.lvl+1,title:it.title,gi:res(it.o)}))});
  let tl=null;
  if(txtText){tl=txtText.split(/\r?\n/).filter(l=>l.trim()).map((l,i)=>{const m=l.match(/^\s*\[(\d+)\]\s*(.*?)\s*\|\s*(\d+)\s*$/);
   if(!m)throw Error('TXT line '+(i+1)+' is not in the form "[level] Name | page": '+l);return{lvl:+m[1],title:m[2],page:+m[3]}})}
  const useToc=$('toc').checked||!!tl,out=await PDFDocument.create();
  let cover=null;if($('cov').files[0])cover=await PDFDocument.load(await $('cov').files[0].arrayBuffer(),{ignoreEncryption:true});
+ const cn=cover?cover.getPageCount():0,coverRefs=[];
  // numbering
  const cnt=[],num=lvls=>{};const nums=[];
  ents.forEach(e=>{cnt.length=e.lvl;for(let i=0;i<e.lvl;i++)cnt[i]=cnt[i]||0;cnt[e.lvl-1]++;nums.push(cnt.join('.'))});
@@ -212,12 +214,12 @@ async function build(){
   const c2=[],n2=lv.map(l=>{c2.length=l;for(let i=0;i<l;i++)c2[i]=c2[i]||0;c2[l-1]++;return c2.join('.')});
   const lines=shown.map((e,i)=>clean(n2[i]+'. '+(tl?tl[i].title:ents[i].title),font));
   TP=layout(lines,lv,font,bold);ents.numtxt=n2}
- const offset=(cover?1:0)+TP.length;
+ const offset=cn+TP.length;
  if(tl){let bad=tl.length!==ents.length?'Entry count differs':'';
   if(!bad){const i=tl.findIndex((t,i)=>t.lvl!==ents[i].lvl);if(i>=0)bad='Level differs at entry '+(i+1)}
   if(bad){dl('existing-structure.txt',ents.map(e=>`[${e.lvl}] ${e.title} | ${offset+e.gi+1}`).join('\n'),'text/plain');
    throw Error(`TXT structure does not match the merged files (${bad}).\nTXT has ${tl.length} entries, merged files have ${ents.length}.\nThe existing structure was exported as existing-structure.txt (page numbers assume your current options).`)}}
- if(cover){const[cp]=await out.copyPages(cover,[0]);out.addPage(cp)}
+ if(cover)(await out.copyPages(cover,[...Array(cn).keys()])).forEach(p=>coverRefs.push(out.addPage(p).ref));
  const tocPages=TP.map(()=>out.addPage([W,H])),refs=[];
  for(const a of act){(await out.copyPages(a.f.lib,a.keep)).forEach(p=>refs.push(out.addPage(p).ref))}
  TP.forEach((pg,pi)=>{const page=tocPages[pi];
@@ -230,7 +232,8 @@ async function build(){
    if(k>0)page.drawText('.'.repeat(k),{x:W-M-nw-6-k*dw,y:ye,size:FS,font,color:rgb(.4,.4,.4)});
    const link=out.context.obj({Type:'Annot',Subtype:'Link',Rect:[e.x0,e.y-e.h+2,W-M,e.y],Border:[0,0,0],Dest:[refs[ents[e.i].gi],'Fit']});
    page.node.addAnnot(out.context.register(link))})});
- addOutline(out,ents.map((e,i)=>({lvl:e.lvl,title:tl?tl[i].title:e.title,gi:e.gi})).map(x=>({...x,gi:x.gi})),refs.map(r=>r));
+ const cov=cover?readOutline(cover).map(x=>({lvl:x.lvl,title:x.title,ref:coverRefs[x.o]||coverRefs[0]})):[];
+ addOutline(out,[...cov,...ents.map((e,i)=>({lvl:e.lvl,title:tl?tl[i].title:e.title,ref:refs[e.gi]}))]);
  return out.save({useObjectStreams:true});
 }
 $('go').onclick=async()=>{$('go').disabled=true;msg('Merging...');
